@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hopline</title>
+  <style>
+    :root {
+      --ink: #18212b;
+      --cream: #fff8e7;
+      --coral: #ef6858;
+      --yellow: #ffc857;
+      --mint: #95d5b2;
+      --sky: #b9e7f3;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      color: var(--ink);
+      font-family: Georgia, "Times New Roman", serif;
+      background: #f3b562;
+      background-image: linear-gradient(145deg, #f5cb7a 0%, #f3b562 55%, #e88f65 100%);
+    }
+
+    .game-shell {
+      width: min(940px, 100%);
+      border: 3px solid var(--ink);
+      border-radius: 18px;
+      overflow: hidden;
+      background: var(--cream);
+      box-shadow: 10px 10px 0 rgba(24, 33, 43, .18);
+    }
+
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 20px 24px 16px;
+      border-bottom: 3px solid var(--ink);
+      background: var(--cream);
+    }
+
+    h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.8rem); line-height: .9; letter-spacing: -2px; }
+    .tagline { margin: 9px 0 0; font: 700 .78rem/1.2 Arial, sans-serif; letter-spacing: 1.5px; text-transform: uppercase; }
+
+    .stats { display: flex; gap: 10px; font: 700 .82rem Arial, sans-serif; text-transform: uppercase; }
+    .stat { min-width: 82px; padding: 8px 10px; border: 2px solid var(--ink); background: #fff; text-align: center; }
+    .stat strong { display: block; font-size: 1.35rem; line-height: 1.1; }
+
+    .stage-wrap { position: relative; padding: 16px; background: var(--sky); }
+    canvas { display: block; width: 100%; height: auto; border: 3px solid var(--ink); background: var(--sky); }
+    .message { position: absolute; inset: 16px; display: grid; place-items: center; pointer-events: none; }
+    .message span { padding: 12px 18px; border: 3px solid var(--ink); background: var(--cream); font: 700 1rem Arial, sans-serif; text-align: center; box-shadow: 5px 5px 0 var(--ink); }
+
+    footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 20px; border-top: 3px solid var(--ink); background: #f7e2b3; font: 700 .82rem Arial, sans-serif; }
+    .controls { color: #4b5560; }
+    button { border: 2px solid var(--ink); padding: 9px 13px; color: var(--cream); background: var(--coral); font: 700 .8rem Arial, sans-serif; text-transform: uppercase; cursor: pointer; box-shadow: 3px 3px 0 var(--ink); }
+    button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
+    .touch-controls { display: none; gap: 10px; margin-top: 14px; justify-content: center; }
+    .touch-controls button { width: 90px; padding: 14px 8px; font-size: 1.2rem; }
+
+    @media (max-width: 620px) {
+      header { display: block; }
+      .stats { margin-top: 18px; }
+      .stat { flex: 1; }
+      footer { align-items: stretch; flex-direction: column; text-align: center; }
+      .touch-controls { display: flex; }
+    }
+  </style>
+</head>
+<body>
+  <main class="game-shell">
+    <header>
+      <div>
+        <h1>Hopline</h1>
+        <p class="tagline">Jump clean. Dodge kindly.</p>
+      </div>
+      <div class="stats" aria-label="Game stats">
+        <div class="stat">Score<strong id="score">0</strong></div>
+        <div class="stat">Lives<strong id="lives">3</strong></div>
+        <div class="stat">Best<strong id="best">0</strong></div>
+      </div>
+    </header>
+
+    <section class="stage-wrap">
+      <canvas id="game" width="900" height="420" aria-label="Hopline game canvas"></canvas>
+      <div class="message" id="message"><span>Press SPACE or tap JUMP to start</span></div>
+      <div class="touch-controls">
+        <button id="jumpButton" type="button">Jump</button>
+        <button id="pauseButton" type="button">Pause</button>
+      </div>
+    </section>
+
+    <footer>
+      <div class="controls">SPACE / ↑ to jump · P to pause · dodge the bunnies</div>
+      <button id="restartButton" type="button">Restart game</button>
+    </footer>
+  </main>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const livesEl = document.getElementById('lives');
+    const bestEl = document.getElementById('best');
+    const message = document.getElementById('message');
+    const restartButton = document.getElementById('restartButton');
+    const jumpButton = document.getElementById('jumpButton');
+    const pauseButton = document.getElementById('pauseButton');
+
+    const groundY = 344;
+    const player = { x: 126, y: groundY - 58, width: 42, height: 58, velocityY: 0, jumping: false, blink: 0 };
+    let bunnies = [];
+    let particles = [];
+    let score = 0;
+    let lives = 3;
+    let best = Number(localStorage.getItem('hopline-best') || 0);
+    let speed = 4.2;
+    let spawnTimer = 0;
+    let lastTime = 0;
+    let running = false;
+    let paused = false;
+    let gameOver = false;
+    let animationId;
+
+    bestEl.textContent = best;
+
+    function resetGame() {
+      bunnies = [];
+      particles = [];
+      score = 0;
+      lives = 3;
+      speed = 4.2;
+      spawnTimer = 0;
+      player.y = groundY - player.height;
+      player.velocityY = 0;
+      player.jumping = false;
+      player.blink = 0;
+      running = false;
+      paused = false;
+      gameOver = false;
+      pauseButton.textContent = 'Pause';
+      updateHud();
+      message.innerHTML = '<span>Press SPACE or tap JUMP to start</span>';
+      message.style.display = 'grid';
+      draw();
+    }
+
+    function startGame() {
+      if (gameOver) resetGame();
+      running = true;
+      paused = false;
+      message.style.display = 'none';
+      lastTime = performance.now();
+      cancelAnimationFrame(animationId);
+      animationId = requestAnimationFrame(loop);
+    }
+
+    function jump() {
+      if (!running || paused || gameOver) { startGame(); return; }
+      if (!player.jumping) {
+        player.velocityY = -13.5;
+        player.jumping = true;
+        burst(player.x + 18, groundY, '#fff8e7', 5);
+      }
+    }
+
+    function togglePause() {
+      if (!running || gameOver) return;
+      paused = !paused;
+      pauseButton.textContent = paused ? 'Resume' : 'Pause';
+      message.innerHTML = paused ? '<span>Paused<br>Press P or RESUME to continue</span>' : '';
+      message.style.display = paused ? 'grid' : 'none';
+      if (!paused) { lastTime = performance.now(); animationId = requestAnimationFrame(loop); }
+    }
+
+    function loop(now) {
+      if (!running || paused || gameOver) return;
+      const delta = Math.min((now - lastTime) / 16.67, 2);
+      lastTime = now;
+      update(delta);
+      draw();
+      animationId = requestAnimationFrame(loop);
+    }
+
+    function update(delta) {
+      score += delta * .045;
+      speed = Math.min(9, 4.2 + score / 115);
+      player.velocityY += .72 * delta;
+      player.y += player.velocityY * delta;
+      if (player.y >= groundY - player.height) {
+        player.y = groundY - player.height;
+        player.velocityY = 0;
+        player.jumping = false;
+      }
+
+      spawnTimer -= delta;
+      if (spawnTimer <= 0) {
+        spawnBunny();
+        spawnTimer = Math.max(52, 105 - speed * 6) + Math.random() * 45;
+      }
+
+      bunnies.forEach(bunny => {
+        bunny.x -= speed * delta;
+        bunny.bob += .12 * delta;
+        if (!bunny.hit && intersects(player, bunny)) {
+          bunny.hit = true;
+          lives -= 1;
+          player.blink = 42;
+          burst(bunny.x + bunny.width / 2, bunny.y + 20, '#ef6858', 12);
+          if (lives <= 0) endGame();
+        }
+      });
+      bunnies = bunnies.filter(bunny => bunny.x > -70);
+      if (player.blink > 0) player.blink -= delta;
+
+      particles.forEach(particle => { particle.x += particle.vx * delta; particle.y += particle.vy * delta; particle.vy += .15 * delta; particle.life -= delta; });
+      particles = particles.filter(particle => particle.life > 0);
+      updateHud();
+    }
+
+    function spawnBunny() {
+      const height = 48 + Math.random() * 12;
+      bunnies.push({ x: canvas.width + 30, y: groundY - height, width: 42, height, bob: Math.random() * 5, hit: false });
+    }
+
+    function intersects(a, b) {
+      return a.x + 7 < b.x + b.width - 7 && a.x + a.width - 8 > b.x + 7 && a.y + 5 < b.y + b.height && a.y + a.height > b.y + 8;
+    }
+
+    function endGame() {
+      gameOver = true;
+      running = false;
+      const finalScore = Math.floor(score);
+      if (finalScore > best) { best = finalScore; localStorage.setItem('hopline-best', best); }
+      updateHud();
+      message.innerHTML = `<span>Game over<br><b>${finalScore} points</b><br>Press SPACE or RESTART</span>`;
+      message.style.display = 'grid';
+      draw();
+    }
+
+    function updateHud() {
+      scoreEl.textContent = Math.floor(score);
+      livesEl.textContent = lives;
+      bestEl.textContent = best;
+    }
+
+    function burst(x, y, color, amount) {
+      for (let index = 0; index < amount; index++) particles.push({ x, y, vx: (Math.random() - .5) * 4, vy: -Math.random() * 3, life: 20 + Math.random() * 14, color });
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBackground();
+      drawGround();
+      bunnies.forEach(drawBunny);
+      drawPlayer();
+      particles.forEach(particle => { ctx.globalAlpha = particle.life / 34; ctx.fillStyle = particle.color; ctx.fillRect(particle.x, particle.y, 4, 4); });
+      ctx.globalAlpha = 1;
+    }
+
+    function drawBackground() {
+      ctx.fillStyle = '#b9e7f3'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#d9f3f6';
+      for (let x = 35; x < canvas.width; x += 150) { ctx.beginPath(); ctx.arc(x, 92 + (x % 3) * 12, 31, 0, Math.PI * 2); ctx.arc(x + 32, 102, 24, 0, Math.PI * 2); ctx.fill(); }
+      ctx.fillStyle = '#95d5b2'; ctx.beginPath(); ctx.moveTo(0, 278); ctx.quadraticCurveTo(180, 215, 365, 278); ctx.quadraticCurveTo(570, 185, 900, 270); ctx.lineTo(900, groundY); ctx.lineTo(0, groundY); ctx.fill();
+    }
+
+    function drawGround() {
+      ctx.fillStyle = '#f7e2b3'; ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+      ctx.fillStyle = '#18212b'; ctx.fillRect(0, groundY, canvas.width, 5);
+      ctx.strokeStyle = '#d6b76f'; ctx.lineWidth = 3;
+      for (let x = -20; x < canvas.width; x += 48) { ctx.beginPath(); ctx.moveTo(x, groundY + 27); ctx.lineTo(x + 15, groundY + 27); ctx.stroke(); }
+    }
+
+    function drawPlayer() {
+      if (player.blink > 0 && Math.floor(player.blink / 4) % 2 === 0) return;
+      const x = player.x, y = player.y;
+      ctx.fillStyle = '#ef6858'; ctx.fillRect(x + 5, y + 18, 33, 38);
+      ctx.fillStyle = '#ffc857'; ctx.fillRect(x + 11, y + 1, 22, 27);
+      ctx.fillStyle = '#fff8e7'; ctx.fillRect(x + 14, y + 6, 5, 5); ctx.fillRect(x + 26, y + 6, 5, 5);
+      ctx.fillStyle = '#18212b'; ctx.fillRect(x + 16, y + 7, 3, 3); ctx.fillRect(x + 27, y + 7, 3, 3);
+      ctx.fillRect(x + 17, y + 19, 13, 3);
+      ctx.fillStyle = '#18212b'; ctx.fillRect(x + 2, y + 52, 14, 6); ctx.fillRect(x + 27, y + 52, 14, 6);
+    }
+
+    function drawBunny(bunny) {
+      const x = bunny.x, y = bunny.y + Math.sin(bunny.bob) * 2;
+      ctx.fillStyle = bunny.hit ? '#ef6858' : '#fff8e7';
+      ctx.fillRect(x + 6, y + 17, 31, 30); ctx.fillRect(x + 11, y + 3, 10, 22); ctx.fillRect(x + 25, y, 10, 25);
+      ctx.fillStyle = '#ef6858'; ctx.fillRect(x + 14, y + 7, 4, 12); ctx.fillRect(x + 28, y + 4, 4, 13);
+      ctx.fillStyle = '#18212b'; ctx.fillRect(x + 13, y + 25, 4, 4); ctx.fillRect(x + 29, y + 25, 4, 4); ctx.fillRect(x + 20, y + 34, 10, 3);
+    }
+
+    function handleKey(event) {
+      if (event.code === 'Space' || event.code === 'ArrowUp') { event.preventDefault(); jump(); }
+      if (event.key.toLowerCase() === 'p') togglePause();
+    }
+
+    window.addEventListener('keydown', handleKey);
+    jumpButton.addEventListener('click', jump);
+    pauseButton.addEventListener('click', togglePause);
+    restartButton.addEventListener('click', resetGame);
+    resetGame();
+  </script>
+</body>
+</html>
